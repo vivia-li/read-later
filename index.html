@@ -1,0 +1,570 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>稍后阅读</title>
+  <meta name="description" content="一个极简的稍后阅读工具，保存链接、自动抓取标题与描述。" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📑</text></svg>" />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'system-ui', '-apple-system', 'PingFang SC', 'Microsoft YaHei', 'sans-serif'],
+          },
+        },
+      },
+    };
+  </script>
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+
+  <style>
+    [v-cloak] { display: none; }
+    html { -webkit-font-smoothing: antialiased; }
+    .fade-enter-active, .fade-leave-active { transition: opacity .15s ease; }
+    .fade-enter-from, .fade-leave-to { opacity: 0; }
+  </style>
+</head>
+
+<body class="bg-[#f6f6f4] text-neutral-900">
+  <div id="app" v-cloak class="min-h-screen">
+    <div class="mx-auto max-w-2xl px-5 py-6 sm:py-8">
+
+      <!-- Header -->
+      <header class="mb-4 flex items-center justify-between">
+        <div>
+          <h1 class="text-2xl font-semibold tracking-tight text-neutral-900">稍后阅读</h1>
+          <p class="mt-0.5 text-xs text-neutral-500">保存想读的文章，慢慢消化。</p>
+        </div>
+        <span class="text-xs text-neutral-400">{{ counts.unread }} 篇未读</span>
+      </header>
+
+      <!-- Add form -->
+      <form @submit.prevent="addUrl" class="mb-4">
+        <div class="flex items-center gap-2 rounded-2xl border border-neutral-200 bg-white p-1.5 pl-4 shadow-sm transition focus-within:border-neutral-300 focus-within:ring-2 focus-within:ring-neutral-900/5">
+          <svg class="h-4 w-4 shrink-0 text-neutral-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M13.19 8.688a4.5 4.5 0 011.06 7.06l-4.5 4.5a4.5 4.5 0 01-6.36-6.36l3.32-3.32M10.81 15.312a4.5 4.5 0 01-1.06-7.06l4.5-4.5a4.5 4.5 0 016.36 6.36l-3.32 3.32" />
+          </svg>
+          <input
+            v-model="input"
+            type="text"
+            placeholder="粘贴文章链接，回车添加…"
+            class="min-w-0 flex-1 bg-transparent py-2 text-sm outline-none placeholder:text-neutral-400"
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <select
+            v-model="newLabelId"
+            class="shrink-0 cursor-pointer rounded-xl border border-neutral-200 bg-white px-2 py-2 text-xs text-neutral-500 outline-none transition focus:border-neutral-300"
+          >
+            <option value="">无标签</option>
+            <option v-for="l in labels" :key="l.id" :value="l.id">{{ l.name }}</option>
+          </select>
+          <button
+            type="submit"
+            :disabled="loading"
+            class="shrink-0 rounded-xl bg-neutral-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-neutral-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <span v-if="!loading">添加</span>
+            <span v-else class="inline-flex items-center gap-1.5">
+              <svg class="h-3.5 w-3.5 animate-spin" viewBox="0 0 24 24" fill="none">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
+              </svg>
+              抓取中
+            </span>
+          </button>
+        </div>
+        <p v-if="notice" class="mt-2 px-1 text-xs text-neutral-400">{{ notice }}</p>
+        <p v-if="error" class="mt-2 px-1 text-xs text-red-500">{{ error }}</p>
+      </form>
+
+      <!-- Filter bar: 阅读状态 + 标签筛选 -->
+      <div class="mb-4 flex flex-wrap items-center gap-2">
+        <div v-if="items.length" class="inline-flex gap-1 rounded-full bg-neutral-200/70 p-1">
+          <button
+            v-for="f in filters"
+            :key="f.key"
+            @click="filter = f.key"
+            class="rounded-full px-3 py-1 text-xs font-medium transition"
+            :class="filter === f.key ? 'bg-white text-neutral-900 shadow-sm' : 'text-neutral-500 hover:text-neutral-700'"
+          >
+            {{ f.label }} <span class="text-neutral-400">{{ counts[f.key] }}</span>
+          </button>
+        </div>
+
+        <div v-if="items.length" class="mx-1 h-4 w-px bg-neutral-200"></div>
+
+        <button
+          v-if="labels.length"
+          @click="activeLabel = null"
+          class="rounded-full border px-3 py-1 text-xs font-medium transition"
+          :class="!activeLabel ? 'border-neutral-900 bg-neutral-900 text-white' : 'border-neutral-200 bg-white text-neutral-500 hover:border-neutral-300'"
+        >全部标签</button>
+
+        <button
+          v-for="l in labels"
+          :key="l.id"
+          @click="activeLabel = activeLabel === l.id ? null : l.id"
+          class="group inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition"
+          :class="activeLabel === l.id ? 'border-neutral-900 bg-white text-neutral-900' : 'border-neutral-200 bg-white text-neutral-600 hover:border-neutral-300'"
+          :style="activeLabel === l.id ? {} : { color: l.color }"
+        >
+          <span class="h-1.5 w-1.5 rounded-full" :style="{ background: l.color }"></span>
+          {{ l.name }}
+          <span class="text-neutral-300">{{ labelCount(l.id) }}</span>
+          <button
+            @click.stop="deleteLabel(l.id)"
+            class="ml-0.5 text-neutral-300 opacity-0 transition hover:text-neutral-500 group-hover:opacity-100"
+            title="删除标签"
+          >×</button>
+        </button>
+
+        <form v-if="creatingLabel" @submit.prevent="createLabel" class="inline-flex">
+          <input
+            v-model="newLabelName"
+            ref="labelInput"
+            placeholder="标签名"
+            class="w-24 rounded-full border border-neutral-300 bg-white px-3 py-1 text-xs outline-none transition focus:border-neutral-900"
+            @keydown.esc="cancelCreateLabel"
+            @blur="cancelCreateLabel"
+          />
+        </form>
+        <button
+          v-else
+          @click="startCreateLabel"
+          class="rounded-full border border-dashed border-neutral-300 px-3 py-1 text-xs text-neutral-400 transition hover:border-neutral-400 hover:text-neutral-600"
+        >＋ 标签</button>
+      </div>
+
+      <!-- List -->
+      <ul v-if="filteredItems.length" class="space-y-3">
+        <li
+          v-for="item in filteredItems"
+          :key="item.id"
+          class="group relative flex gap-4 rounded-2xl border border-neutral-200/70 bg-white p-4 shadow-sm transition hover:border-neutral-300 hover:shadow-md"
+          :class="item.read ? 'opacity-60' : ''"
+        >
+          <!-- unread dot -->
+          <span
+            class="mt-1.5 h-2 w-2 shrink-0 rounded-full transition"
+            :class="item.read ? 'bg-neutral-300' : 'bg-indigo-500'"
+            :title="item.read ? '已读' : '未读'"
+          ></span>
+
+          <!-- thumbnail -->
+          <img
+            v-if="item.image"
+            :src="item.image"
+            alt=""
+            class="h-16 w-16 shrink-0 rounded-lg border border-neutral-100 object-cover"
+            @error="item.image = ''"
+          />
+
+          <!-- content -->
+          <div class="min-w-0 flex-1">
+            <div class="flex items-start justify-between gap-3">
+              <a
+                :href="item.url"
+                target="_blank"
+                rel="noopener"
+                @click="markRead(item)"
+                class="leading-snug transition hover:text-indigo-600"
+                :class="item.read ? 'font-normal text-neutral-600' : 'font-medium text-neutral-900'"
+              >{{ item.title }}</a>
+              <div class="flex shrink-0 items-center gap-0.5">
+                <button
+                  @click="toggleFavorite(item)"
+                  :title="item.favorite ? '取消收藏' : '收藏'"
+                  class="rounded-md p-1 transition hover:bg-neutral-100"
+                >
+                  <svg
+                    class="h-4 w-4 transition"
+                    :class="item.favorite ? 'text-amber-400' : 'text-neutral-300 hover:text-neutral-500'"
+                    :fill="item.favorite ? 'currentColor' : 'none'"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    stroke-width="1.8"
+                  >
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M11.48 3.499a.562.562 0 011.04 0l2.125 5.111a.563.563 0 00.475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 00-.182.557l1.285 5.385a.562.562 0 01-.84.61l-4.725-2.885a.563.563 0 00-.586 0L6.982 20.54a.562.562 0 01-.84-.61l1.285-5.386a.562.562 0 00-.182-.557l-4.204-3.602a.563.563 0 01.321-.988l5.518-.442a.563.563 0 00.475-.345L11.48 3.5z" />
+                  </svg>
+                </button>
+                <button
+                  @click="remove(item.id)"
+                  class="shrink-0 rounded-md p-1 text-neutral-300 opacity-0 transition hover:bg-neutral-100 hover:text-neutral-500 group-hover:opacity-100"
+                  title="删除"
+                >
+                  <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            <p v-if="item.description" class="mt-1 line-clamp-2 text-sm leading-relaxed text-neutral-500">
+              {{ item.description }}
+            </p>
+
+            <div class="mt-2.5 flex flex-wrap items-center gap-x-2 gap-y-1.5 text-xs text-neutral-400">
+              <span class="flex min-w-0 items-center gap-1.5">
+                <img :src="item.favicon" alt="" class="h-3.5 w-3.5 shrink-0 rounded-sm" @error="item.favicon = ''" />
+                <span class="truncate">{{ item.domain }}</span>
+              </span>
+              <span>·</span>
+              <span class="shrink-0">{{ timeAgo(item.createdAt) }}</span>
+              <span>·</span>
+              <button @click="toggleRead(item)" class="shrink-0 transition hover:text-neutral-600">
+                {{ item.read ? '标为未读' : '标为已读' }}
+              </button>
+              <span>·</span>
+              <select
+                :value="item.labelId || ''"
+                @change="assignLabel(item, $event.target.value)"
+                :style="selectLabelStyle(item)"
+                class="shrink-0 cursor-pointer rounded-full border px-2 py-0.5 text-xs outline-none transition"
+                title="标签"
+              >
+                <option value="">无标签</option>
+                <option v-for="l in labels" :key="l.id" :value="l.id">{{ l.name }}</option>
+              </select>
+            </div>
+          </div>
+        </li>
+      </ul>
+
+      <!-- Empty state -->
+      <div v-else class="mt-16 flex flex-col items-center text-center">
+        <div class="flex h-14 w-14 items-center justify-center rounded-2xl border border-neutral-200 bg-white text-neutral-300 shadow-sm">
+          <svg class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.6">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-4-7 4V5z" />
+          </svg>
+        </div>
+        <p class="mt-4 text-sm font-medium text-neutral-600">{{ items.length ? '这里空空如也' : '还没有保存的文章' }}</p>
+        <p class="mt-1 text-sm text-neutral-400">在上方粘贴一个链接，开始收藏吧。</p>
+      </div>
+    </div>
+
+    <!-- Confirm modal -->
+    <transition name="fade">
+      <div v-if="confirm" class="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div class="absolute inset-0 bg-black/30" @click="confirm = null"></div>
+        <div class="relative w-full max-w-sm rounded-2xl bg-white p-5 shadow-xl">
+          <h3 class="text-sm font-semibold text-neutral-900">{{ confirm.title }}</h3>
+          <p class="mt-2 break-words text-sm leading-relaxed text-neutral-500">{{ confirm.message }}</p>
+          <div class="mt-5 flex justify-end gap-2">
+            <button @click="confirm = null" class="rounded-lg px-3 py-1.5 text-sm font-medium text-neutral-500 transition hover:bg-neutral-100">取消</button>
+            <button @click="confirmAndClose" class="rounded-lg bg-red-600 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-red-500">删除</button>
+          </div>
+        </div>
+      </div>
+    </transition>
+  </div>
+
+  <script>
+    const { createApp, ref, computed, onMounted, watch, nextTick } = Vue;
+
+    const STORAGE_ITEMS = 'read-later:items:v1';
+    const STORAGE_LABELS = 'read-later:labels:v1';
+
+    const PALETTE = ['#6366f1', '#0ea5e9', '#10b981', '#f59e0b', '#f43f5e', '#8b5cf6', '#14b8a6', '#f97316'];
+
+    // 免费 CORS 代理，用于绕过跨域限制抓取页面 HTML（依次尝试，取第一个可用者）
+    const PROXIES = [
+      (u) => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(u),
+      (u) => 'https://corsproxy.io/?url=' + encodeURIComponent(u),
+      (u) => 'https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(u),
+    ];
+
+    const uid = () =>
+      (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2));
+
+    function timeAgo(iso) {
+      const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+      if (s < 60) return '刚刚';
+      const m = s / 60;
+      if (m < 60) return Math.floor(m) + ' 分钟前';
+      const h = m / 60;
+      if (h < 24) return Math.floor(h) + ' 小时前';
+      const d = h / 24;
+      if (d < 30) return Math.floor(d) + ' 天前';
+      return new Date(iso).toLocaleDateString('zh-CN');
+    }
+
+    async function fetchPage(url) {
+      let lastErr;
+      for (const proxy of PROXIES) {
+        try {
+          const ctrl = new AbortController();
+          const t = setTimeout(() => ctrl.abort(), 10000);
+          const res = await fetch(proxy(url), { signal: ctrl.signal });
+          clearTimeout(t);
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          const text = await res.text();
+          if (text) return text;
+          throw new Error('empty body');
+        } catch (e) {
+          lastErr = e;
+        }
+      }
+      throw lastErr || new Error('fetch failed');
+    }
+
+    function parseMeta(html, url) {
+      const doc = new DOMParser().parseFromString(html, 'text/html');
+      const attr = (sel, a) => {
+        const el = doc.querySelector(sel);
+        return el ? (el.getAttribute(a) || '').trim() : '';
+      };
+      const text = (sel) => {
+        const el = doc.querySelector(sel);
+        return el ? (el.textContent || '').trim() : '';
+      };
+      const clean = (s) => s.replace(/\s+/g, ' ').trim();
+
+      const title = clean(
+        attr('meta[property="og:title"]', 'content') ||
+        attr('meta[name="twitter:title"]', 'content') ||
+        text('title') ||
+        text('h1') ||
+        attr('meta[name="title"]', 'content') ||
+        ''
+      );
+      const description = clean(
+        attr('meta[property="og:description"]', 'content') ||
+        attr('meta[name="twitter:description"]', 'content') ||
+        attr('meta[name="description"]', 'content') ||
+        ''
+      );
+      let image = attr('meta[property="og:image"]', 'content') || attr('meta[name="twitter:image"]', 'content') || '';
+      if (image) {
+        try { image = new URL(image, url).href; } catch (e) { image = ''; }
+      }
+      return { title, description, image };
+    }
+
+    // Microlink：免费的链接元数据 API（自带 CORS、无需 key），返回结构化 JSON
+    async function viaMicrolink(url) {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 12000);
+      const res = await fetch('https://api.microlink.io/?url=' + encodeURIComponent(url), { signal: ctrl.signal });
+      clearTimeout(t);
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const json = await res.json();
+      const d = json && json.data;
+      if (!d || !d.title) throw new Error('no title');
+      return {
+        title: (d.title || '').trim(),
+        description: (d.description || '').trim(),
+        image: (d.image && d.image.url) || '',
+      };
+    }
+
+    // 依次尝试多个免费来源，返回 { title, description, image }；全部失败返回 null
+    async function fetchMetadata(url) {
+      try {
+        const meta = await viaMicrolink(url);
+        if (meta && meta.title) return meta;
+      } catch (e) { /* 忽略，尝试下一个来源 */ }
+
+      try {
+        const html = await fetchPage(url);
+        const meta = parseMeta(html, url);
+        if (meta.title) return meta;
+      } catch (e) { /* 忽略 */ }
+
+      return null;
+    }
+
+    createApp({
+      setup() {
+        const input = ref('');
+        const loading = ref(false);
+        const error = ref('');
+        const notice = ref('');
+        const filter = ref('all');
+        const items = ref([]);
+        const labels = ref([]);
+        const activeLabel = ref(null);
+        const newLabelId = ref('');
+        const creatingLabel = ref(false);
+        const newLabelName = ref('');
+        const labelInput = ref(null);
+        const confirm = ref(null);
+
+        onMounted(() => {
+          try { items.value = JSON.parse(localStorage.getItem(STORAGE_ITEMS) || '[]'); } catch (e) {}
+          try { labels.value = JSON.parse(localStorage.getItem(STORAGE_LABELS) || '[]'); } catch (e) {}
+        });
+
+        watch(items, (v) => localStorage.setItem(STORAGE_ITEMS, JSON.stringify(v)), { deep: true });
+        watch(labels, (v) => localStorage.setItem(STORAGE_LABELS, JSON.stringify(v)), { deep: true });
+
+        const filters = [
+          { key: 'all', label: '全部' },
+          { key: 'unread', label: '未读' },
+          { key: 'read', label: '已读' },
+        ];
+
+        const counts = computed(() => ({
+          all: items.value.length,
+          unread: items.value.filter((i) => !i.read).length,
+          read: items.value.filter((i) => i.read).length,
+        }));
+
+        const filteredItems = computed(() => {
+          let list = [...items.value];
+          if (filter.value === 'unread') list = list.filter((i) => !i.read);
+          else if (filter.value === 'read') list = list.filter((i) => i.read);
+          if (activeLabel.value) list = list.filter((i) => i.labelId === activeLabel.value);
+
+          if (filter.value === 'read') {
+            // 已读：按阅读顺序（最近阅读在前）
+            list.sort((a, b) => {
+              const ta = a.readAt ? new Date(a.readAt).getTime() : 0;
+              const tb = b.readAt ? new Date(b.readAt).getTime() : 0;
+              return tb - ta;
+            });
+          } else {
+            // 全部 / 未读：收藏置顶，其余按添加时间
+            list.sort((a, b) => {
+              if (!!a.favorite !== !!b.favorite) return a.favorite ? -1 : 1;
+              return new Date(b.createdAt) - new Date(a.createdAt);
+            });
+          }
+          return list;
+        });
+
+        function normalizeUrl(u) {
+          u = u.trim();
+          if (!u) return null;
+          if (!/^https?:\/\//i.test(u)) u = 'https://' + u;
+          try { return new URL(u).href; } catch (e) { return null; }
+        }
+
+        function makeItem(url, meta) {
+          const host = new URL(url).hostname;
+          return {
+            id: uid(),
+            url,
+            title: (meta && meta.title) || host,
+            description: (meta && meta.description) || '',
+            image: (meta && meta.image) || '',
+            favicon: 'https://www.google.com/s2/favicons?domain=' + host + '&sz=64',
+            domain: host.replace(/^www\./, ''),
+            read: false,
+            favorite: false,
+            readAt: null,
+            labelId: newLabelId.value || null,
+            createdAt: new Date().toISOString(),
+          };
+        }
+
+        async function addUrl() {
+          error.value = '';
+          notice.value = '';
+          const url = normalizeUrl(input.value);
+          if (!url) {
+            error.value = '请输入有效的链接';
+            return;
+          }
+
+          loading.value = true;
+          try {
+            const meta = await fetchMetadata(url);
+            items.value.push(makeItem(url, meta));
+            input.value = '';
+            newLabelId.value = '';
+            if (!meta || !meta.title) notice.value = '未能抓取到标题，已按链接保存';
+          } catch (e) {
+            items.value.push(makeItem(url, null));
+            input.value = '';
+            newLabelId.value = '';
+            notice.value = '未能抓取到标题，已按链接保存';
+          } finally {
+            loading.value = false;
+          }
+        }
+
+        function toggleRead(item) {
+          item.read = !item.read;
+          item.readAt = item.read ? new Date().toISOString() : null;
+        }
+        function markRead(item) {
+          if (!item.read) {
+            item.read = true;
+            item.readAt = new Date().toISOString();
+          }
+        }
+        function toggleFavorite(item) { item.favorite = !item.favorite; }
+        function remove(id) {
+          const item = items.value.find((i) => i.id === id);
+          const name = item ? (item.title || item.domain) : '该文章';
+          confirmDelete('确认删除', '确定要删除「' + name + '」吗？此操作不可撤销。', () => {
+            items.value = items.value.filter((i) => i.id !== id);
+          });
+        }
+        function assignLabel(item, value) { item.labelId = value || null; }
+
+        function chipStyle(l) { return { color: l.color }; }
+        function selectLabelStyle(item) {
+          const l = labels.value.find((x) => x.id === item.labelId);
+          if (!l) return { color: '#a3a3a3', borderColor: '#e5e5e5' };
+          return { color: l.color, borderColor: l.color + '55', backgroundColor: l.color + '14' };
+        }
+        function labelCount(id) { return items.value.filter((i) => i.labelId === id).length; }
+
+        function startCreateLabel() {
+          creatingLabel.value = true;
+          newLabelName.value = '';
+          nextTick(() => { if (labelInput.value) labelInput.value.focus(); });
+        }
+        function createLabel() {
+          const name = newLabelName.value.trim();
+          if (!name) { cancelCreateLabel(); return; }
+          labels.value.push({ id: uid(), name, color: PALETTE[labels.value.length % PALETTE.length] });
+          creatingLabel.value = false;
+          newLabelName.value = '';
+        }
+        function cancelCreateLabel() {
+          creatingLabel.value = false;
+          newLabelName.value = '';
+        }
+        function deleteLabel(id) {
+          const l = labels.value.find((x) => x.id === id);
+          const name = l ? l.name : '该标签';
+          confirmDelete('确认删除', '确定要删除标签「' + name + '」吗？相关文章的标签会被移除。', () => {
+            labels.value = labels.value.filter((x) => x.id !== id);
+            items.value.forEach((i) => { if (i.labelId === id) i.labelId = null; });
+            if (activeLabel.value === id) activeLabel.value = null;
+          });
+        }
+        function confirmDelete(title, message, action) {
+          confirm.value = { title, message, action };
+        }
+        function confirmAndClose() {
+          if (confirm.value && confirm.value.action) confirm.value.action();
+          confirm.value = null;
+        }
+
+        return {
+          input, loading, error, notice, filter, items, labels, confirm,
+          activeLabel, newLabelId, creatingLabel, newLabelName, labelInput,
+          filters, counts, filteredItems,
+          addUrl, toggleRead, markRead, toggleFavorite, remove, assignLabel,
+          chipStyle, selectLabelStyle, labelCount,
+          startCreateLabel, createLabel, cancelCreateLabel, deleteLabel,
+          confirmDelete, confirmAndClose,
+          timeAgo,
+        };
+      },
+    }).mount('#app');
+  </script>
+</body>
+</html>

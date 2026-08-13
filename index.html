@@ -109,11 +109,14 @@
           :class="!activeLabel ? 'border-neutral-900 bg-neutral-900 text-white' : 'border-neutral-200 bg-white text-neutral-500 hover:border-neutral-300'"
         >全部标签</button>
 
-        <button
+        <div
           v-for="l in labels"
           :key="l.id"
+          role="button"
+          tabindex="0"
           @click="activeLabel = activeLabel === l.id ? null : l.id"
-          class="group inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition"
+          @keydown.enter="activeLabel = activeLabel === l.id ? null : l.id"
+          class="group inline-flex cursor-pointer select-none items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition"
           :class="activeLabel === l.id ? 'border-neutral-900 bg-white text-neutral-900' : 'border-neutral-200 bg-white text-neutral-600 hover:border-neutral-300'"
           :style="activeLabel === l.id ? {} : { color: l.color }"
         >
@@ -121,11 +124,12 @@
           {{ l.name }}
           <span class="text-neutral-300">{{ labelCount(l.id) }}</span>
           <button
+            type="button"
             @click.stop="deleteLabel(l.id)"
             class="ml-0.5 text-neutral-300 opacity-0 transition hover:text-neutral-500 group-hover:opacity-100"
             title="删除标签"
           >×</button>
-        </button>
+        </div>
 
         <form v-if="creatingLabel" @submit.prevent="createLabel" class="inline-flex">
           <input
@@ -403,8 +407,8 @@
           try { labels.value = JSON.parse(localStorage.getItem(STORAGE_LABELS) || '[]'); } catch (e) {}
         });
 
-        watch(items, (v) => localStorage.setItem(STORAGE_ITEMS, JSON.stringify(v)), { deep: true });
-        watch(labels, (v) => localStorage.setItem(STORAGE_LABELS, JSON.stringify(v)), { deep: true });
+        watch(items, (v) => { try { localStorage.setItem(STORAGE_ITEMS, JSON.stringify(v)); } catch (e) {} }, { deep: true });
+        watch(labels, (v) => { try { localStorage.setItem(STORAGE_LABELS, JSON.stringify(v)); } catch (e) {} }, { deep: true });
 
         const filters = [
           { key: 'all', label: '全部' },
